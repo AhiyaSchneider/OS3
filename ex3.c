@@ -158,7 +158,7 @@ int numOfProducers(FILE* configFile) {
     return numThreads;
 }
 
-int (FILE* configFile, int* ret){
+int getInfoConfig(FILE* configFile, int* ret){
     // Skip the producer number line
     char buffer[MAX_LINE_CONF];
     if (fgets(buffer, sizeof(buffer), configFile) == NULL) {
