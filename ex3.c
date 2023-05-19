@@ -7,7 +7,7 @@
 #define MAX_LINE_CONF 150
 
 /**
- * Queue - A data structure representing a bounded buffer with thread-safe access.
+ * BoundedQueue - A data structure representing a bounded buffer with thread-safe access.
  *
  * @field size: The size of the bounded buffer.
  * @field front: The index of the front element in the bounded buffer. Initialized to -1
@@ -23,12 +23,12 @@ typedef struct {
     int rear;  // initialize to -1 so indicate the queue is empty will point to last in queue
     char** articlessArr; 
     pthread_mutex_t mutex;  // Mutex for thread-safe access
-} Queue;
+} BoundedQueue;
 
 typedef struct {
     int threadNum;
     int numOfArticles;
-    Queue* queue;
+    BoundedQueue* queue;
 } ThreadArguments;
 
 typedef enum {
@@ -37,15 +37,16 @@ typedef enum {
     NEWS
 } MessageType;
 
+//bounded queue:
 /**
  * Bounded_Buffer - Create a new bounded buffer with the specified size.
  *
  * @param size: The size of the bounded buffer.
  *
- * @return: A pointer to the newly created Queue object representing the bounded buffer.
+ * @return: A pointer to the newly created BoundedQueue object representing the bounded buffer.
  */
-Queue* Bounded_Buffer(int size) {
-    Queue* newQ = malloc(sizeof(Queue));
+BoundedQueue* Bounded_Buffer(int size) {
+    BoundedQueue* newQ = malloc(sizeof(BoundedQueue));
     newQ->size = size;
     newQ->front = -1;
     newQ->rear = -1;
@@ -57,9 +58,9 @@ Queue* Bounded_Buffer(int size) {
  * insert - Insert a new object into the bounded buffer.
  *
  * @param s: A pointer to the object to be inserted into the bounded buffer.
- * @param queue: A pointer to the Queue object representing the bounded buffer.
+ * @param queue: A pointer to the BoundedQueue object representing the bounded buffer.
  */
-void insert(char* s, Queue* queue) {
+void insert(char* s, BoundedQueue* queue) {
     //check if it possible to insert a new
     while ((queue->rear + 1) % queue->size == queue->front) {
         continue;
@@ -81,7 +82,7 @@ void insert(char* s, Queue* queue) {
  * @return: A pointer to the removed object from the bounded buffer. Returns NULL
  *          if the bounded buffer is empty.
  */
-char* removeItem(Queue* queue) {
+char* removeItem(BoundedQueue* queue) {
     char* item = NULL;
 
     // Check if the queue is empty
@@ -103,6 +104,83 @@ char* removeItem(Queue* queue) {
     return item;
 }
 
+//un bounded queue:
+typedef struct {
+    char* article;
+    UnBoundItem* next;
+    UnBoundItem* prev;
+} UnBoundItem;
+
+typedef struct {
+    UnBoundItem* head;
+    UnBoundItem* tail;
+    pthread_mutex_t mutex;
+} UnBoundQueue;
+
+UnBoundQueue* unBoundQueue(){
+    UnBoundQueue* queue = malloc(sizeof(UnBoundQueue));
+    queue->head = NULL;
+    queue->tail = NULL;
+    return queue;
+}
+
+/**
+ * insert - Insert a new object into the unbounded queue.
+ *
+ * @param s: A pointer to the object to be inserted into the unbounded queue.
+ * @param queue: A pointer to the UnBoundQueue object representing the unbounded queue.
+ */
+void insert(char* s, UnBoundQueue* queue) {
+    UnBoundItem* newItem = malloc(sizeof(UnBoundItem));
+    newItem->article = s;
+    newItem->next = NULL;
+
+    pthread_mutex_lock(&(queue->mutex));
+
+    if (queue->head == NULL) {
+        queue->head = newItem;
+        queue->tail = newItem;
+    } else {
+        queue->tail->next = newItem;
+        queue->tail = newItem;
+    }
+
+    pthread_mutex_unlock(&(queue->mutex));
+}
+
+/**
+ * removeItem - Remove the first object from the unbounded queue and return it.
+ *
+ * @param queue: A pointer to the UnBoundQueue object representing the unbounded queue.
+ *
+ * @return: A pointer to the removed object from the unbounded queue. Returns NULL
+ *          if the unbounded queue is empty.
+ */
+char* removeItem(UnBoundQueue* queue) {
+    pthread_mutex_lock(&(queue->mutex));
+
+    if (queue->head == NULL) {
+        pthread_mutex_unlock(&(queue->mutex));
+        return NULL; // Queue is empty
+    }
+
+    UnBoundItem* itemToRemove = queue->head;
+    char* item = itemToRemove->article;
+
+    queue->head = itemToRemove->next;
+    free(itemToRemove);
+
+    if (queue->head == NULL) {
+        queue->tail = NULL;
+    }
+
+    pthread_mutex_unlock(&(queue->mutex));
+
+    return item;
+}
+
+
+//the code:
 /**
  * numOfProducers - Determines the number of threads based on the configuration file.
  * 
@@ -206,7 +284,7 @@ void* producer(void* arg) {
     ThreadArguments* args = (ThreadArguments*)arg;
     int threadNum = args->threadNum;
     int numOfArticles = args->numOfArticles;
-    Queue* queue = args->queue;
+    BoundedQueue* queue = args->queue;
 
     int i = 0, randNum;
     for (i = 0; i < numOfArticles; i++)
@@ -238,8 +316,14 @@ void* producer(void* arg) {
     pthread_exit(NULL);
 }
 
+/**
+ * Dispatcher function that processes items from multiple queues until all queues are done.
+ *
+ * @param arg The argument passed to the thread containing the queues and the number of queues.
+ * @return NULL
+ */
 void* dispatcher(void* arg){
-    Queue** queues = (Queue**)arg; // Cast the argument to the appropriate type
+    BoundedQueue** queues = (BoundedQueue**)arg; // Cast the argument to the appropriate type
     int numQueues = *((int*)arg + 1); // Get the number of queues from the argument
 
     bool* isDone = malloc(numQueues * sizeof(bool));  // Allocate the boolean array
@@ -291,7 +375,7 @@ int main(int argc, char* argv[]) {
 
     //check how many threads i will need and than creat queue array this length
     int threadsNum = numOfProducers(configFile);
-    Queue** queuesArr = malloc(threadsNum * sizeof(Queue*));
+    BoundedQueue** queuesArr = malloc(threadsNum * sizeof(BoundedQueue*));
 
     //make the N producers threads and feed the queues
     //create the dispatcher
