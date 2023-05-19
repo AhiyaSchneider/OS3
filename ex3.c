@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdbool.h> 
 
 #define MAX_LINE_CONF 150
 
@@ -23,6 +24,12 @@ typedef struct {
     char** articlessArr; 
     pthread_mutex_t mutex;  // Mutex for thread-safe access
 } Queue;
+
+typedef struct {
+    int threadNum;
+    int numOfArticles;
+    Queue* queue;
+} ThreadArguments;
 
 typedef enum {
     SPORTS,
@@ -74,12 +81,12 @@ void insert(char* s, Queue* queue) {
  * @return: A pointer to the removed object from the bounded buffer. Returns NULL
  *          if the bounded buffer is empty.
  */
-char* remove(Queue* queue) {
+char* removeItem(Queue* queue) {
     char* item = NULL;
 
     // Check if the queue is empty
     while (queue->front == queue->rear) {
-        continue;
+        NULL;
     }
     // Lock the mutex to ensure exclusive access to the queue
     pthread_mutex_lock(&(queue->mutex));
@@ -94,42 +101,6 @@ char* remove(Queue* queue) {
     pthread_mutex_unlock(&(queue->mutex));
 
     return item;
-}
-
-/**
- * generateArticles - Generates articles with random types and stores them in the queue.
- * 
- * @param arg: Pointer to the thread number.
- * @param threadNum: Thread number.
- * @param numOfArticles: Number of articles to generate.
- * @return: None.
- */
-void* generateArticles(void* arg, int threadNum, int numOfArticles) {
-    int i = 0, randNum;
-    for (i = 0; i < numOfArticles; i++)
-    {
-        randNum = rand() % 3;  // Randomly generate num as 0-2
-        char* type;
-        switch (randNum) {
-            case SPORTS:
-                type = "SPORTS";
-            case WEATHER:
-                type = "WEATHER";
-            case NEWS:
-                type = "NEWS";
-            default:
-                type = "UNKNOWN";
-            }
-        char message[100];
-        sprintf(message, "Producer %d %s %d", threadNum, type, i);
-        //allocate memory on heap so it remain
-        char* messagePtr = malloc((strlen(message) + 1) * sizeof(char));
-        strcpy(messagePtr, message);
-
-        // queueArr[threadNum].insert(message);
-        printf("Generated article: %s\n", message);
-    }
-    pthread_exit(NULL);
 }
 
 /**
@@ -158,6 +129,15 @@ int numOfProducers(FILE* configFile) {
     return numThreads;
 }
 
+/**
+ * Retrieves the configuration information from the given config file.
+ *
+ * @param configFile The file pointer to the configuration file.
+ * @param ret An integer array to store the retrieved configuration values.
+ *            ret[0] will be set to the number of articles to generate.
+ *            ret[1] will be set to the size of the queue.
+ * @return 0 if the configuration information is successfully retrieved, 1 otherwise.
+ */
 int getInfoConfig(FILE* configFile, int* ret){
     // Skip the producer number line
     char buffer[MAX_LINE_CONF];
@@ -193,8 +173,17 @@ int getInfoConfig(FILE* configFile, int* ret){
     return 0;
 }
 
+/**
+ * Opens the configuration file for reading.
+ *
+ * @param configFile The file pointer to store the opened configuration file.
+ * @param argc The number of command-line arguments.
+ * @param argv An array of command-line arguments.
+ * @return 0 if the configuration file is successfully opened, 1 otherwise.
+ */
 int openFile(FILE* configFile, int argc, char* argv[]){
     if (argc != 2) {
+        printf("no confiig\n");
         fprintf(stderr, "Usage: ./program_name <config_file>\n");
         return 1;
     }
@@ -207,10 +196,93 @@ int openFile(FILE* configFile, int argc, char* argv[]){
     return 0;
 }
 
-// Write the main function which reads the configuration file and 
-//    initiates the system.
-int main(int argc, char* argv[]) {
+/**
+ * generateArticles - Generates articles with random types and stores them in the queue.
+ * 
+ * @param arg: Pointer to the thread arguments.
+ * @return: None.
+ */
+void* producer(void* arg) {
+    ThreadArguments* args = (ThreadArguments*)arg;
+    int threadNum = args->threadNum;
+    int numOfArticles = args->numOfArticles;
+    Queue* queue = args->queue;
 
+    int i = 0, randNum;
+    for (i = 0; i < numOfArticles; i++)
+    {
+        randNum = rand() % 3;  // Randomly generate num as 0-2
+        char* type;
+        switch (randNum) {
+            case SPORTS:
+                type = "SPORTS";
+            case WEATHER:
+                type = "WEATHER";
+            case NEWS:
+                type = "NEWS";
+            default:
+                type = "UNKNOWN";
+            }
+        char message[100];
+        sprintf(message, "Producer %d %s %d", threadNum, type, i);
+        //allocate memory on heap so it remain
+        char* messagePtr = malloc((strlen(message) + 1) * sizeof(char));
+        strcpy(messagePtr, message);
+        //insert message to queue
+        insert(message, queue);
+        printf("Generated article: %s\n", message);
+    }
+    char* finishMessage = malloc(strlen("Done") + 1);  // +1 for the null terminator
+    strcpy(finishMessage, "Done");
+    insert(finishMessage, queue);
+    pthread_exit(NULL);
+}
+
+void* dispatcher(void* arg){
+    Queue** queues = (Queue**)arg; // Cast the argument to the appropriate type
+    int numQueues = *((int*)arg + 1); // Get the number of queues from the argument
+
+    bool* isDone = malloc(numQueues * sizeof(bool));  // Allocate the boolean array
+    bool finish = false;
+    // Check if the allocation was successful
+    if (isDone == NULL) {
+        // Handle the error
+        fprintf(stderr, "Failed to allocate memory for the boolean array.\n");
+        // Additional error handling or cleanup code if needed
+        // ...
+    } else {
+        // Initialize all elements to false
+        for (int i = 0; i < numQueues; i++) {
+            isDone[i] = false;
+        }
+    }
+
+    while (!finish) {
+        finish = true;
+        for (int i = 0; i < numQueues; i++) {
+            //check if this queue finished
+            if(isDone[i]) {
+                continue;
+            }
+            char* item = removeItem(queues[i]); // Assuming you have a removeItem function for removing items from the queue
+            //the remove return null if the queue is empty
+            if (item != NULL) {
+                // Process the item
+                //check if the item is "Done"
+                if (strcmp(item, "Done") == 0) {
+                    isDone[i] = true;
+                }
+                printf("Processed item from queue %d: %s\n", i, item);
+            }
+            if(finish && !isDone[i]) {
+                finish = false;
+            }
+        }
+    }
+    pthread_exit(NULL);
+}
+
+int main(int argc, char* argv[]) {
     //check if there are inough param and if the file can be opened.
     FILE* configFile;
     if (openFile(configFile, argc, argv)) {
@@ -223,24 +295,38 @@ int main(int argc, char* argv[]) {
 
     //make the N producers threads and feed the queues
     //create the dispatcher
-    int i = 0, config[2];
+    int i = 0;
+    pthread_t threads[threadsNum];
+    //make the threads and send them and a quqeue to func
     for (i = 0; i < threadsNum; i++)
     {
+        int config[2];
         //put in config[0] the num Of Articles and in config[1] the size of bounded
         if(getInfoConfig(configFile, config)) {
             return 1;
         }
         queuesArr[i] = Bounded_Buffer(config[1]);
 
-        
+        ThreadArguments* args = malloc(sizeof(ThreadArguments));
+        args->threadNum = i;
+        args->numOfArticles = config[0];
+        args->queue = queuesArr[i];
+
+        pthread_create(&threads[i], NULL, producer, args);
     }
+
+     
+
+    
     
 
-
+    //implement dispatcher and three
     //when read 3 failed - read only one number so generate for each N,W,S editors a bounded queue
 
-    //generate 3 co-editors threads and get from the queues 
 
+
+    //generate 3 co-editors threads and get from the queues 
+    //implement screen maneger
     //generate screen manager thread
     return 0;
 }
