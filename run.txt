@@ -1,0 +1,3 @@
+valgrind --leak-check=full --show-leak-kinds=all ./ex3.out conf.txt
+gcc -g -o ex3.out ex3.c -pthread
+./ex3.out conf.txt
